@@ -5,10 +5,7 @@
 
 import { ProposalDetails } from '@/components/proposals/proposal-details';
 
-export default function ProposalDetailsPage({
-  params,
-}: {
-  params: { id: string };
-}) {
-  return <ProposalDetails proposalId={params.id} />;
+export default async function ProposalDetailsPage({ params }: { params: Promise<{ id: string }> | { id: string } }) {
+  const resolvedParams = await params as { id: string };
+  return <ProposalDetails proposalId={resolvedParams.id} />;
 }

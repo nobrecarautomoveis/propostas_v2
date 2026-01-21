@@ -22,26 +22,26 @@ interface ProposalDetailsProps {
 
 export function ProposalDetails({ proposalId }: ProposalDetailsProps) {
   const router = useRouter();
-  const { currentUser } = useAuth();
-  
+  const { currentUser, isLoading: authLoading } = useAuth();
+
   // Buscar dados da proposta
-  const { proposals, isLoading } = useProposals({ userId: currentUser?.id });
+  const { proposals, isLoading: proposalsLoading } = useProposals({ userId: currentUser?.id });
   const proposal = proposals?.find(p => p.id === proposalId);
 
-  // Mostrar loading enquanto carrega ou enquanto não encontrou a proposta
-  if (isLoading || (!proposal && proposals === undefined)) {
+  // Mostrar loading enquanto a autenticação ou os dados da proposta estão carregando
+  if (authLoading || proposalsLoading) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
-
-  // Só mostra "não encontrada" depois de carregar e realmente não existir
-  if (!proposal && proposals) {
+  // Se já carregou e a proposta não existe, mostrar mensagem clara
+  if (!proposal) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="flex flex-col items-center justify-center py-12 text-center space-y-2">
+        <p className="text-sm text-muted-foreground">Proposta não encontrada.</p>
+        <Button variant="ghost" onClick={() => router.back()}>Voltar</Button>
       </div>
     );
   }
