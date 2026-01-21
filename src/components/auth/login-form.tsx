@@ -16,9 +16,8 @@ import { Input } from '@/components/ui/input';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { useMutation, useAction } from 'convex/react';
-import { api } from '../../../convex/_generated/api';
 import { useToast } from '@/hooks/use-toast';
+import { login } from '@/services/auth.service';
 
 const formSchema = z.object({
   email: z.string().email({ message: 'Por favor, insira um e-mail válido.' }),
@@ -28,7 +27,6 @@ const formSchema = z.object({
 export function LoginForm() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
-  const login = useAction(api.userActions.login); // Corrigido: userActions em vez de users
   const { toast } = useToast();
 
   const form = useForm<z.infer<typeof formSchema>>({
@@ -44,13 +42,6 @@ export function LoginForm() {
     try {
       const result = await login(values);
       if (result.userId) {
-        // Salva no localStorage
-        window.localStorage.setItem('userId', result.userId);
-        
-        // Salva no cookie com configurações de segurança
-        const cookieValue = `userId=${result.userId}; path=/; max-age=86400; secure=${window.location.protocol === 'https:'}; samesite=strict`;
-        document.cookie = cookieValue;
-        
         router.push('/propostas');
       } else {
         toast({ title: 'Erro de Login', description: 'ID de usuário não retornado.', variant: 'destructive' });

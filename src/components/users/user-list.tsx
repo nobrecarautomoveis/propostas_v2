@@ -1,10 +1,9 @@
 'use client'
 
-import { useAction, useQuery } from 'convex/react'
-import { api } from '../../../convex/_generated/api'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
-import { useCurrentUser } from '@/hooks/use-current-user'
+import { useAuth } from '@/hooks/use-auth'
+import { useUsers, useUserMutations } from '@/hooks/use-users'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -49,30 +48,32 @@ import { Badge } from '@/components/ui/badge'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { UserForm } from './user-form'
-import { Id } from '../../../convex/_generated/dataModel'
 
-type User = {
-  _id: Id<'users'>;
-  name: string;
-  email: string;
-  role: 'ADMIN' | 'USER';
+import type { User as SupabaseUser } from '@/lib/supabase';
+
+type User = SupabaseUser & {
+  _id?: string;
 };
 
 export function UserList() {
   const router = useRouter()
-  const { currentUser, isLoading } = useCurrentUser();
+  const { currentUser, isLoading } = useAuth();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  
-  const users = useQuery(
-    api.users.getUsers,
-    currentUser ? { userId: currentUser._id } : 'skip',
-  )
-  const deleteUser = useAction(api.userActions.deleteUser)
-  const createUser = useAction(api.userActions.createUser)
-  const updateUser = useAction(api.userActions.updateUser)
+
+  const { users: rawUsers, isLoading: usersLoading, refetch: refetchUsers } = useUsers({
+    requesterId: currentUser?.id
+  });
+
+  // Mapear usuários para formato compatível
+  const users = rawUsers?.map(u => ({
+    ...u,
+    _id: u.id,
+  }));
+
+  const { createUser, updateUser, deleteUser } = useUserMutations();
 
   const handleFormSubmit = async (data: any) => {
     if (!currentUser) {
@@ -84,9 +85,8 @@ export function UserList() {
     try {
       if (editingUser) {
         // Atualiza usuário existente
+        const userId = editingUser.id || editingUser._id;
         const updateData: any = {
-          userIdToUpdate: editingUser._id,
-          currentUserId: currentUser._id,
           name: data.name,
           role: data.role,
         };
@@ -95,7 +95,7 @@ export function UserList() {
           updateData.password = data.password;
         }
 
-        await updateUser(updateData);
+        await updateUser(userId!, updateData);
         toast.success('Usuário atualizado com sucesso!');
       } else {
         // Cria novo usuário
@@ -107,12 +107,13 @@ export function UserList() {
         });
         toast.success('Usuário criado com sucesso!');
       }
-      
+
       setIsDialogOpen(false);
       setEditingUser(null);
+      refetchUsers();
     } catch (error: any) {
       console.error('Erro ao processar usuário:', error);
-      toast.error(error.data || 'Erro ao processar usuário');
+      toast.error(error.message || 'Erro ao processar usuário');
     } finally {
       setIsSubmitting(false);
     }
@@ -136,19 +137,18 @@ export function UserList() {
     if (!userToDelete || !currentUser) return
 
     try {
-      await deleteUser({ 
-        userIdToDelete: userToDelete._id,
-        currentUserId: currentUser._id 
-      })
+      const userId = userToDelete.id || userToDelete._id;
+      await deleteUser(userId!)
       toast.success('Usuário excluído com sucesso!')
       setUserToDelete(null);
+      refetchUsers();
     } catch (error: any) {
       console.error('Falha ao excluir usuário:', error)
-      toast.error(error.data || 'Falha ao excluir usuário.')
+      toast.error(error.message || 'Falha ao excluir usuário.')
     }
   }
 
-  if (isLoading || users === undefined) {
+  if (isLoading || usersLoading) {
     return <div>Carregando...</div>
   }
 

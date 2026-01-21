@@ -68,11 +68,12 @@ interface TypeBadgeProps {
 }
 
 export function TypeBadge({ type, variant = 'info' }: TypeBadgeProps) {
+  const variantKey = variant === 'primary' ? 'default' : variant;
   return (
     <span className={cn(
       'inline-block px-2 py-1 rounded-md font-medium',
       BADGE.size.md,
-      BADGE.variant[variant]
+      BADGE.variant[variantKey as keyof typeof BADGE.variant]
     )}>
       {type}
     </span>

@@ -1,4 +1,0 @@
-Cache bust timestamp: 2025-07-24T22:07:00Z
-Deploy version: v2.1
-Convex environment: knowing-chickadee-162
-Status: Force rebuild to clear CDN cache

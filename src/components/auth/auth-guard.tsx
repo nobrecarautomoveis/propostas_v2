@@ -1,6 +1,6 @@
 'use client';
 
-import { useCurrentUser } from '@/hooks/use-current-user';
+import { useAuth } from '@/hooks/use-auth';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
@@ -9,7 +9,7 @@ interface AuthGuardProps {
 }
 
 export function AuthGuard({ children }: AuthGuardProps) {
-  const { isAuthenticated, isLoading } = useCurrentUser();
+  const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
   const [shouldRender, setShouldRender] = useState(false);
   const [hasCheckedAuth, setHasCheckedAuth] = useState(false);
@@ -19,20 +19,20 @@ export function AuthGuard({ children }: AuthGuardProps) {
     const checkAuth = () => {
       const hasLocalStorage = typeof window !== 'undefined' && window.localStorage.getItem('userId');
       const hasCookie = typeof document !== 'undefined' && document.cookie.includes('userId=');
-      
+
       if (!hasLocalStorage && !hasCookie) {
         router.replace('/');
         return false;
       }
       return true;
     };
-    
+
     if (!hasCheckedAuth) {
       const hasAuth = checkAuth();
       setHasCheckedAuth(true);
       if (!hasAuth) return;
     }
-    
+
     if (!isLoading) {
       if (!isAuthenticated) {
         router.replace('/');

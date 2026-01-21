@@ -1,33 +1,46 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAction, useQuery } from 'convex/react';
-import { api } from '../../../../../convex/_generated/api';
 import { UserForm } from '@/components/users/user-form';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
-import { useCurrentUser } from '@/hooks/use-current-user';
-import { Id } from '../../../../../convex/_generated/dataModel';
+import { useAuth } from '@/hooks/use-auth';
+import { useUserMutations } from '@/hooks/use-users';
+import { getUserById } from '@/services/users.service';
+import type { User } from '@/lib/supabase';
 
 interface EditUserPageProps {
-  params: {
+  params: Promise<{
     id: string;
-  };
+  }>;
 }
 
 export default function EditUserPage({ params }: EditUserPageProps) {
+  const { id } = use(params);
   const router = useRouter();
-  const { currentUser } = useCurrentUser();
+  const { currentUser } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const updateUser = useAction(api.userActions.updateUser);
-  
-  const userToEdit = useQuery(
-    api.users.getUserById,
-    currentUser ? { userId: params.id as Id<'users'> } : 'skip'
-  );
+  const [userToEdit, setUserToEdit] = useState<User | null | undefined>(undefined);
+  const { updateUser } = useUserMutations();
+
+  // Buscar usuário para edição
+  useEffect(() => {
+    async function fetchUser() {
+      if (currentUser) {
+        try {
+          const user = await getUserById(id);
+          setUserToEdit(user);
+        } catch (error) {
+          console.error('Erro ao buscar usuário:', error);
+          setUserToEdit(null);
+        }
+      }
+    }
+    fetchUser();
+  }, [currentUser, id]);
 
   const handleSubmit = async (data: any) => {
     if (!currentUser) {
@@ -38,8 +51,6 @@ export default function EditUserPage({ params }: EditUserPageProps) {
     setIsSubmitting(true);
     try {
       const updateData: any = {
-        userIdToUpdate: params.id as Id<'users'>,
-        currentUserId: currentUser._id,
         name: data.name,
         role: data.role,
       };
@@ -48,12 +59,12 @@ export default function EditUserPage({ params }: EditUserPageProps) {
         updateData.password = data.password;
       }
 
-      await updateUser(updateData);
+      await updateUser(id, updateData);
       toast.success('Usuário atualizado com sucesso!');
       router.push('/usuarios');
     } catch (error: any) {
       console.error('Erro ao atualizar usuário:', error);
-      toast.error(error.data || 'Erro ao atualizar usuário');
+      toast.error(error.message || 'Erro ao atualizar usuário');
     } finally {
       setIsSubmitting(false);
     }
@@ -74,21 +85,21 @@ export default function EditUserPage({ params }: EditUserPageProps) {
   return (
     <div className="container mx-auto py-6">
       <div className="mb-6">
-        <Button variant="ghost" size="icon" className="h-8 w-8 -ml-2" onClick={() => router.push('/usuarios')}>                        
+        <Button variant="ghost" size="icon" className="h-8 w-8 -ml-2" onClick={() => router.push('/usuarios')}>
           <ArrowLeft className="h-5 w-5" />
         </Button>
       </div>
-      
+
       <Card>
         <CardHeader>
           <CardTitle>Editar Usuário</CardTitle>
           <CardDescription>Editar informações do usuário {userToEdit.name}.</CardDescription>
         </CardHeader>
         <CardContent>
-          <UserForm 
-            onSubmit={handleSubmit} 
+          <UserForm
+            onSubmit={handleSubmit}
             initialData={userToEdit}
-            isSubmitting={isSubmitting} 
+            isSubmitting={isSubmitting}
           />
         </CardContent>
       </Card>

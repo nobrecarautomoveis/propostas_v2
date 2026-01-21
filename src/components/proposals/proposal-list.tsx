@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -11,32 +12,51 @@ import { Badge } from "@/components/ui/badge";
 import { PlusCircle, MoreHorizontal } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ProposalForm, ProposalFormData } from './proposal-form';
+import { ProposalKPICards } from './proposal-kpi-cards';
 import { format } from 'date-fns';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { useQuery, useMutation } from 'convex/react';
-import { api } from '../../../convex/_generated/api';
-import { useCurrentUser } from '@/hooks/use-current-user';
-import { Id } from '../../../convex/_generated/dataModel';
+import { useAuth } from '@/hooks/use-auth';
+import { useProposals, useProposalMutations } from '@/hooks/use-proposals';
+import { useUsers } from '@/hooks/use-users';
+import type { ProposalWithUser } from '@/lib/supabase';
 
 type Proposal = ProposalFormData & {
-  _id: Id<"proposals">;
+  id: string;
   proposalNumber: string;
   dateAdded: string;
+  salespersonId?: string;
+  brandName?: string | null;
+  modelName?: string | null;
+  vehicleType?: string;
+  proposalType?: string;
+  tipoPessoa?: string | null;
+  razaoSocial?: string | null;
+  modelYear?: string | null;
+  valorFinanciar?: string | null;
+  // Aliases para compatibilidade
+  _id?: string;
+  totalValue?: number;
+  createdBy?: { id: string; name: string; email: string } | null;
 };
 
 // Mapeamento de status para variantes de badge
 const statusVariant: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   "Em Análise": "secondary",
   "Aprovada": "default",
-  "Recusada": "destructive"
+  "Recusada": "destructive",
+  "Efetivada": "default",
+  "Devolvida": "default",
+  "Reanalise": "default"
 };
 
 export function ProposalList() {
+    const router = useRouter();
     const { toast } = useToast();
-    const { currentUser } = useCurrentUser();
+    const { currentUser } = useAuth();
     const [search, setSearch] = useState('');
     const [selectedMonth, setSelectedMonth] = useState<string>('all');
+    const [selectedYear, setSelectedYear] = useState<string>('all');
     const [selectedUser, setSelectedUser] = useState<string>('all');
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [editingProposal, setEditingProposal] = useState<Proposal | null>(null);
@@ -45,14 +65,22 @@ export function ProposalList() {
     const [refreshKey, setRefreshKey] = useState(0);
 
     // Consulta as propostas do backend (só quando autenticado)
-    const proposals = useQuery(
-      api.proposals.getProposals,
-      currentUser?._id ? { userId: currentUser._id } : "skip"
-    );
+    const { proposals: rawProposals, refetch: refetchProposals } = useProposals({
+      userId: currentUser?.id
+    });
+
+    // Propostas já vêm convertidas em camelCase do serviço
+    const proposals = rawProposals?.map(p => ({
+      ...p,
+      _id: p.id,
+      // Aliases para compatibilidade com código legado
+      totalValue: (p as any).value,
+    }));
 
     // Função para forçar atualização
     const forceRefresh = () => {
       setRefreshKey(prev => prev + 1);
+      refetchProposals();
     };
 
     // Log simples para monitoramento (opcional)
@@ -62,29 +90,29 @@ export function ProposalList() {
       }
     }, [proposals]);
 
-    // Sistema funcionando - fallback não é mais necessário
+    // Buscar usuários
+    const { users: rawUsers } = useUsers({ requesterId: currentUser?.id });
 
-    // QUERY REABILITADA - BASE PROD FUNCIONANDO
-    const usersQuery = useQuery(
-      api.users.getAllUsers,
-      currentUser?._id ? { requesterId: currentUser._id } : "skip"
-    );
-
-    // Fallback para garantir que sempre temos pelo menos o usuário atual
-    const users = usersQuery || (currentUser ? [
-      { _id: currentUser._id, name: currentUser.name, email: currentUser.email, role: currentUser.role }
+    // Mapear usuários para formato compatível
+    const users = rawUsers?.map(u => ({
+      ...u,
+      _id: u.id,
+    })) || (currentUser ? [
+      { _id: currentUser.id, id: currentUser.id, name: currentUser.name, email: currentUser.email, role: currentUser.role }
     ] : []);
 
     // Mutations para criar, atualizar e excluir propostas
-    const createProposalMutation = useMutation(api.proposals.createProposal);
-    const updateProposalMutation = useMutation(api.proposals.updateProposal);
-    const updateBankAnalysisMutation = useMutation(api.proposals.updateBankAnalysis);
-    const deleteProposalMutation = useMutation(api.proposals.deleteProposal);
+    const {
+      createProposal: createProposalMutation,
+      updateProposal: updateProposalMutation,
+      updateBankAnalysis: updateBankAnalysisMutation,
+      deleteProposal: deleteProposalMutation
+    } = useProposalMutations();
 
     const handleFormSubmit = async (data: ProposalFormData) => {
         try {
             // Validação do usuário atual
-            if (!currentUser?._id) {
+            if (!currentUser?.id) {
                 toast({
                     title: "Erro de Autenticação",
                     description: "Usuário não encontrado. Faça login novamente.",
@@ -93,22 +121,17 @@ export function ProposalList() {
                 return;
             }
 
-            console.log("🔍 Criando proposta com userId:", currentUser._id);
+            console.log("🔍 Criando proposta com userId:", currentUser.id);
 
             if (editingProposal) {
                 // Atualiza proposta existente
+                const proposalId = editingProposal.id || editingProposal._id;
                 console.log("🔍 Editando proposta com dados:", {
-                    proposalId: editingProposal._id,
+                    proposalId,
                     empresa: data.empresa,
                     cargo: data.cargo,
                     naturezaOcupacao: data.naturezaOcupacao,
                     allData: data
-                });
-
-                console.log("📤 Dados completos sendo enviados para updateProposal:", {
-                    proposalId: editingProposal._id,
-                    userId: currentUser._id,
-                    ...data
                 });
 
                 // Extrair campos de análise bancária
@@ -130,11 +153,7 @@ export function ProposalList() {
                 } = data;
 
                 // Atualizar dados gerais
-                await updateProposalMutation({
-                    proposalId: editingProposal._id,
-                    userId: currentUser._id as Id<"users">,
-                    ...restData
-                });
+                await updateProposalMutation(proposalId!, restData);
 
                 // Se houver dados bancários, atualize-os separadamente
                 const bankData = {
@@ -155,13 +174,9 @@ export function ProposalList() {
 
                 // Verificar se tem algum campo de banco definido
                 const hasBankData = Object.values(bankData).some(value => value !== undefined);
-                
+
                 if (hasBankData) {
-                  await updateBankAnalysisMutation({
-                    proposalId: editingProposal._id,
-                    userId: currentUser._id as Id<"users">,
-                    ...bankData
-                  });
+                  await updateBankAnalysisMutation(proposalId!, currentUser.id, bankData);
                 }
 
                 toast({
@@ -195,8 +210,8 @@ export function ProposalList() {
 
                 // Cria nova proposta
                 const result = await createProposalMutation({
-                    ...restData,
-                    userId: currentUser._id as Id<"users">
+                    ...restData as any,
+                    userId: currentUser.id
                 });
 
                 // Se houver dados bancários, atualize-os separadamente
@@ -220,21 +235,20 @@ export function ProposalList() {
 
                 // Verificar se tem algum campo de banco definido
                 const hasBankData = Object.values(bankData).some(value => value !== undefined);
-                
+
                 if (hasBankData && result?.proposalId) {
-                  await updateBankAnalysisMutation({
-                    proposalId: result.proposalId,
-                    userId: currentUser._id as Id<"users">,
-                    ...bankData
-                  });
+                  await updateBankAnalysisMutation(result.proposalId, currentUser.id, bankData);
                 }
 
                 toast({
                     title: "Proposta Criada",
                     description: "A proposta foi criada com sucesso."
                 });
+
+                // Forçar atualização da lista
+                forceRefresh();
             }
-            
+
             setIsDialogOpen(false);
             setEditingProposal(null);
 
@@ -262,7 +276,7 @@ export function ProposalList() {
         }
     };
 
-    const handleEditClick = (proposal: Proposal) => {
+    const handleEditClick = (proposal: any) => {
         setEditingProposal(proposal);
         setIsDialogOpen(true);
     }
@@ -272,9 +286,12 @@ export function ProposalList() {
         const { _id, proposalNumber, dateAdded, salespersonId, ...formData } = proposal as any;
 
         console.log("🔍 Convertendo proposta para edição:", {
-            empresa: formData.empresa,
-            cargo: formData.cargo,
-            naturezaOcupacao: formData.naturezaOcupacao,
+            fipeCode: formData.fipeCode,
+            brand: formData.brand,
+            model: formData.model,
+            brandName: formData.brandName,
+            modelName: formData.modelName,
+            modelYear: formData.modelYear,
             proposalId: _id
         });
         return {
@@ -285,6 +302,14 @@ export function ProposalList() {
             version: formData.version || '',
             state: formData.state || '',
             valorFinanciar: formData.valorFinanciar || '',
+
+            // Campos FIPE - preservar valores
+            fipeCode: formData.fipeCode || '',
+            brand: formData.brand || '',
+            model: formData.model || '',
+            brandName: formData.brandName || '',
+            modelName: formData.modelName || '',
+            modelYear: formData.modelYear || '',
 
             // Dados pessoais - garantir valores padrão
             cpfCnpj: formData.cpfCnpj || '',
@@ -325,25 +350,24 @@ export function ProposalList() {
         setIsDialogOpen(true);
     }
     
-    const handleDeleteClick = (proposal: Proposal) => {
+    const handleDeleteClick = (proposal: any) => {
         setProposalToDelete(proposal);
     };
 
     const handleDeleteConfirm = async () => {
         if (proposalToDelete && currentUser) {
             try {
-                await deleteProposalMutation({
-                    proposalId: proposalToDelete._id,
-                    userId: currentUser._id
-                });
-                
+                const proposalId = proposalToDelete.id || proposalToDelete._id;
+                await deleteProposalMutation(proposalId!, currentUser.id);
+
                 toast({
                     title: "Proposta Excluída",
                     description: `A proposta ${proposalToDelete.proposalNumber} foi removida com sucesso.`,
                     variant: 'destructive'
                 });
-                
+
                 setProposalToDelete(null);
+                forceRefresh();
             } catch (error) {
                 toast({
                     title: "Erro",
@@ -374,6 +398,17 @@ export function ProposalList() {
         return months;
     };
 
+    // Gera lista de anos para o seletor (ano atual + ano anterior)
+    const getYearOptions = () => {
+        const currentYear = new Date().getFullYear();
+        const years = [
+            { value: 'all', label: 'Todos os anos' },
+            { value: currentYear.toString(), label: currentYear.toString() },
+            { value: (currentYear - 1).toString(), label: (currentYear - 1).toString() }
+        ];
+        return years;
+    };
+
     // Filtra as propostas com base na pesquisa, mês e usuário selecionados
     const filteredProposals = proposals?.filter(p => {
         const searchTerm = search.toLowerCase();
@@ -382,8 +417,12 @@ export function ProposalList() {
         const modelMatch = (p.modelName && p.modelName.toLowerCase().includes(searchTerm)) ||
                          (p.model && p.model.toLowerCase().includes(searchTerm));
         const proposalNumberMatch = p.proposalNumber.toLowerCase().includes(searchTerm);
+        
+        // Busca por nome do cliente (Pessoa Física ou Jurídica)
+        const clientNameMatch = (p.tipoPessoa === 'fisica' && p.nome && p.nome.toLowerCase().includes(searchTerm)) ||
+                               (p.tipoPessoa === 'juridica' && p.razaoSocial && p.razaoSocial.toLowerCase().includes(searchTerm));
 
-        const searchMatch = brandMatch || modelMatch || proposalNumberMatch;
+        const searchMatch = brandMatch || modelMatch || proposalNumberMatch || clientNameMatch;
 
         // Filtro por mês
         let monthMatch = true;
@@ -393,19 +432,33 @@ export function ProposalList() {
             monthMatch = proposalMonth === selectedMonth;
         }
 
+        // Filtro por ano
+        let yearMatch = true;
+        if (selectedYear !== 'all') {
+            const proposalDate = new Date(p.dateAdded);
+            const proposalYear = proposalDate.getFullYear().toString();
+            yearMatch = proposalYear === selectedYear;
+        }
+
         // Filtro por usuário
         let userMatch = true;
         if (selectedUser !== 'all') {
-            userMatch = p.createdBy?._id === selectedUser;
+            userMatch = p.createdBy?.id === selectedUser;
         }
 
-        return searchMatch && monthMatch && userMatch;
+        return searchMatch && monthMatch && yearMatch && userMatch;
     }) || [];
 
   return (
     <>
       <Dialog open={isDialogOpen} onOpenChange={(isOpen) => { setIsDialogOpen(isOpen); if (!isOpen) setEditingProposal(null); }}>
         <AlertDialog open={!!proposalToDelete} onOpenChange={(isOpen) => !isOpen && setProposalToDelete(null)}>
+            {/* KPI Cards */}
+            <ProposalKPICards 
+              proposals={filteredProposals} 
+              userRole={currentUser?.role}
+            />
+
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between gap-4">
@@ -425,11 +478,23 @@ export function ProposalList() {
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
                   <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
                       <Input
-                        placeholder="Buscar por marca, modelo ou nº da proposta..."
+                        placeholder="Buscar por marca, modelo, nome ou nº da proposta..."
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                         className="w-full sm:w-[300px]"
                       />
+                      <Select value={selectedYear} onValueChange={setSelectedYear}>
+                        <SelectTrigger className="w-full sm:w-[150px]">
+                          <SelectValue placeholder="Selecionar ano" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {getYearOptions().map((year) => (
+                            <SelectItem key={year.value} value={year.value}>
+                              {year.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <Select value={selectedMonth} onValueChange={setSelectedMonth}>
                         <SelectTrigger className="w-full sm:w-[180px]">
                           <SelectValue placeholder="Selecionar mês" />
@@ -442,26 +507,28 @@ export function ProposalList() {
                           ))}
                         </SelectContent>
                       </Select>
-                      <Select value={selectedUser} onValueChange={setSelectedUser}>
-                        <SelectTrigger className="w-full sm:w-[200px]">
-                          <SelectValue placeholder="Todos os usuários" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">Todos os usuários</SelectItem>
-                          {users?.map((user) => (
-                            <SelectItem key={user._id} value={user._id}>
-                              <div className="flex items-center gap-2">
-                                <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center">
-                                  <span className="text-xs font-medium text-primary">
-                                    {user.name.charAt(0).toUpperCase()}
-                                  </span>
+                      {currentUser?.role === 'ADMIN' && (
+                        <Select value={selectedUser} onValueChange={setSelectedUser}>
+                          <SelectTrigger className="w-full sm:w-[200px]">
+                            <SelectValue placeholder="Todos os usuários" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">Todos os usuários</SelectItem>
+                            {users?.map((user) => (
+                              <SelectItem key={user._id} value={user._id}>
+                                <div className="flex items-center gap-2">
+                                  <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center">
+                                    <span className="text-xs font-medium text-primary">
+                                      {user.name.charAt(0).toUpperCase()}
+                                    </span>
+                                  </div>
+                                  {user.name}
                                 </div>
-                                {user.name}
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
                   </div>
                 </div>
                 <div className="rounded-md border w-full overflow-x-auto md:overflow-x-visible">
@@ -483,7 +550,11 @@ export function ProposalList() {
                     <TableBody>
                         {filteredProposals.length > 0 ? (
                             filteredProposals.map((proposal) => (
-                                <TableRow key={proposal._id} className="hover:bg-muted/50">
+                                <TableRow 
+                                    key={proposal._id} 
+                                    className="hover:bg-muted/50 cursor-pointer transition-colors"
+                                    onClick={() => router.push(`/propostas/${proposal.id}`)}
+                                >
                                     <TableCell className="font-medium text-xs py-2 px-2 text-center">
                                         {proposal.proposalNumber.replace('PROP-', '')}
                                     </TableCell>
@@ -510,7 +581,7 @@ export function ProposalList() {
                                             {proposal.proposalType === 'financing' ? 'Financ.' : 'Refinanc.'}
                                         </span>
                                     </TableCell>
-                                    <TableCell className="py-2 px-2">
+                                    <TableCell className="py-2 px-2 text-center">
                                         <div className="font-medium text-xs truncate">
                                             {proposal.tipoPessoa === 'fisica'
                                                 ? (proposal.nome || 'Não informado')
@@ -518,7 +589,7 @@ export function ProposalList() {
                                             }
                                         </div>
                                     </TableCell>
-                                    <TableCell className="py-2 px-2">
+                                    <TableCell className="py-2 px-2 text-center">
                                         <div className="space-y-0.5">
                                             <div className="font-medium text-xs truncate">{proposal.brandName || proposal.brand}</div>
                                             <div className="text-xs text-muted-foreground truncate">{proposal.modelName || proposal.model}</div>
@@ -534,7 +605,18 @@ export function ProposalList() {
                                     </TableCell>
                                     <TableCell className="py-2 px-2 text-center">
                                         <div className="truncate">
-                                            <Badge variant={statusVariant[proposal.status] || 'outline'} className="text-xs">
+                                            <Badge 
+                                              variant={statusVariant[proposal.status] || 'outline'} 
+                                              className={`text-xs ${
+                                                proposal.status === 'Em Análise' ? 'bg-orange-500 hover:bg-orange-600 text-white' : 
+                                                proposal.status === 'Aprovada' ? 'bg-blue-500 hover:bg-blue-600 text-white' : 
+                                                proposal.status === 'Efetivada' ? 'bg-green-600 hover:bg-green-700 text-white' : 
+                                                proposal.status === 'Recusada' ? 'text-white' :
+                                                proposal.status === 'Devolvida' ? 'bg-yellow-500 hover:bg-yellow-600 text-white' :
+                                                proposal.status === 'Reanalise' ? 'bg-purple-500 hover:bg-purple-600 text-white' :
+                                                ''
+                                              }`}
+                                            >
                                                 {proposal.status}
                                             </Badge>
                                         </div>
@@ -542,17 +624,27 @@ export function ProposalList() {
                                     <TableCell className="text-center py-2 px-2">
                                         <DropdownMenu>
                                             <DropdownMenuTrigger asChild>
-                                                <Button variant="ghost" size="icon">
+                                                <Button 
+                                                    variant="ghost" 
+                                                    size="icon"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
                                                     <MoreHorizontal className="h-4 w-4" />
                                                 </Button>
                                             </DropdownMenuTrigger>
                                             <DropdownMenuContent align="end">
-                                                <DropdownMenuItem onClick={() => handleEditClick(proposal)}>Editar</DropdownMenuItem>
+                                                <DropdownMenuItem onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleEditClick(proposal);
+                                                }}>Editar</DropdownMenuItem>
                                                 <AlertDialogTrigger asChild>
                                                     <DropdownMenuItem 
                                                         className="text-destructive focus:bg-destructive/90 focus:text-destructive-foreground"
                                                         onSelect={(e) => e.preventDefault()}
-                                                        onClick={() => handleDeleteClick(proposal)}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDeleteClick(proposal);
+                                                        }}
                                                     >
                                                         Excluir
                                                     </DropdownMenuItem>

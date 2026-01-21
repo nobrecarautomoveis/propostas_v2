@@ -2,7 +2,7 @@ import type {Metadata} from 'next';
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from '@/components/layout/theme-provider';
-import ConvexClientProvider from '@/components/layout/ConvexClientProvider';
+import { SupabaseProvider } from '@/components/providers/SupabaseProvider';
 
 export const metadata: Metadata = {
   title: 'Nobrecar Automóveis - Gerenciador de Propostas',
@@ -22,7 +22,7 @@ export default function RootLayout({
         <link href="https://fonts.googleapis.com/css2?family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet" />
       </head>
       <body className="font-body antialiased">
-        <ConvexClientProvider>
+        <SupabaseProvider>
           <ThemeProvider
             attribute="class"
             defaultTheme="system"
@@ -32,7 +32,7 @@ export default function RootLayout({
             {children}
             <Toaster />
           </ThemeProvider>
-        </ConvexClientProvider>
+        </SupabaseProvider>
       </body>
     </html>
   );

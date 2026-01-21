@@ -102,6 +102,14 @@ const fetchWithRetry = async (url: string, maxRetries: number = 3): Promise<Resp
         continue;
       }
 
+      // Erro 400 - Bad Request (parâmetros inválidos, código FIPE incorreto, etc.)
+      if (response.status === 400) {
+        // Não fazer retry para erros 400 (são erros de dados, não de conexão)
+        const errorBody = await response.text().catch(() => '');
+        console.warn(`⚠️ Erro 400 (Bad Request): ${url}`, errorBody);
+        throw new Error(`Código FIPE ou parâmetros inválidos. Verifique os dados informados.`);
+      }
+
       // Outros erros HTTP
       throw new Error(`Erro HTTP ${response.status}: ${response.statusText}`);
 
@@ -262,5 +270,127 @@ export const fetchVehicleDetails = async (
   } catch (error) {
     console.error('❌ Erro ao buscar detalhes do veículo:', error);
     throw new Error('Falha ao buscar os detalhes do veículo. Verifique sua conexão ou tente novamente em alguns minutos.');
+  }
+};
+
+// Novas funções para busca por código FIPE (busca reversa)
+export const fetchYearsByFipeCode = async (
+  vehicleType: 'carros' | 'motos' | 'caminhoes',
+  fipeCode: string
+): Promise<Year[]> => {
+  try {
+    // Mapear tipos para API v2
+    const typeMap = { 'carros': 'cars', 'motos': 'motorcycles', 'caminhoes': 'trucks' };
+    const apiType = typeMap[vehicleType];
+
+    const response = await fetchWithRetry(
+      `${FIPE_API_BASE_URL}/${apiType}/${fipeCode}/years`
+    );
+    const data = await response.json();
+
+    // Converter formato da API v2 para v1 (compatibilidade)
+    return data.map((item: any) => ({
+      nome: item.name,
+      codigo: item.code
+    }));
+  } catch (error) {
+    console.error('❌ Erro ao buscar anos por código FIPE:', error);
+    throw new Error('Código FIPE inválido ou não encontrado. Verifique o código e tente novamente.');
+  }
+};
+
+export const fetchVehicleDetailsByFipeCode = async (
+  vehicleType: 'carros' | 'motos' | 'caminhoes',
+  fipeCode: string,
+  yearCode: string
+): Promise<VehicleDetails> => {
+  try {
+    // Mapear tipos para API v2
+    const typeMap = { 'carros': 'cars', 'motos': 'motorcycles', 'caminhoes': 'trucks' };
+    const apiType = typeMap[vehicleType];
+
+    const response = await fetchWithRetry(
+      `${FIPE_API_BASE_URL}/${apiType}/${fipeCode}/years/${yearCode}`
+    );
+    const data = await response.json();
+
+    // Converter formato da API v2 para v1 (compatibilidade)
+    return {
+      Valor: data.price,
+      Marca: data.brand,
+      Modelo: data.model,
+      AnoModelo: data.modelYear,
+      Combustivel: data.fuel,
+      CodigoFipe: data.codeFipe,
+      MesReferencia: data.referenceMonth,
+      TipoVeiculo: data.vehicleType,
+      SiglaCombustivel: data.fuelAcronym
+    };
+  } catch (error) {
+    console.error('❌ Erro ao buscar detalhes do veículo por código FIPE:', error);
+    throw new Error('Falha ao buscar os detalhes do veículo. Verifique o código FIPE e o ano selecionado.');
+  }
+};
+
+// Nova função para buscar marca, modelo e ano diretamente do código FIPE
+export const fetchBrandModelAndYearByFipeCode = async (
+  vehicleType: 'carros' | 'motos' | 'caminhoes',
+  fipeCode: string
+): Promise<{ brandCode: string; brandName: string; modelCode: string; modelName: string; yearCode: string; yearName: string }> => {
+  try {
+    // Mapear tipos para API v2
+    const typeMap = { 'carros': 'cars', 'motos': 'motorcycles', 'caminhoes': 'trucks' };
+    const apiType = typeMap[vehicleType];
+
+    // Buscar todos os anos disponíveis para obter marca e modelo
+    const yearsResponse = await fetchWithRetry(
+      `${FIPE_API_BASE_URL}/${apiType}/${fipeCode}/years`
+    );
+    const yearsData = await yearsResponse.json();
+
+    if (!yearsData || yearsData.length === 0) {
+      throw new Error('Nenhum ano disponível para este código FIPE');
+    }
+
+    // Encontrar o primeiro ano que tem um número de 4 dígitos (ano real, não código especial como 32000)
+    // Ordenar por nome em ordem decrescente para pegar o ano mais recente
+    const sortedYears = [...yearsData].sort((a, b) => {
+      const aYear = parseInt((a.name || a.nome)?.split(' ')[0] || '0');
+      const bYear = parseInt((b.name || b.nome)?.split(' ')[0] || '0');
+      return bYear - aYear; // Ordem decrescente
+    });
+
+    const selectedYear = sortedYears.find(y => {
+      const yearNum = parseInt((y.name || y.nome)?.split(' ')[0] || '0');
+      return yearNum >= 1900 && yearNum <= 2100; // Filtrar anos válidos
+    }) || yearsData[0]; // Fallback para o primeiro se não encontrar
+
+    const yearCodeToUse = selectedYear.code || selectedYear.codigo;
+    const detailsResponse = await fetchWithRetry(
+      `${FIPE_API_BASE_URL}/${apiType}/${fipeCode}/years/${yearCodeToUse}`
+    );
+    const detailsData = await detailsResponse.json();
+
+    // Buscar todas as marcas para encontrar o código correspondente
+    const brandsResponse = await fetchWithRetry(
+      `${FIPE_API_BASE_URL}/${apiType}/brands`
+    );
+    const brandsData = await brandsResponse.json();
+
+    // Encontrar a marca que corresponde ao nome retornado
+    const matchedBrand = brandsData.find((b: any) => b.name.toLowerCase() === detailsData.brand.toLowerCase());
+    const brandCode = matchedBrand?.code || detailsData.brand; // Fallback para o nome se não encontrar
+
+    return {
+      brandCode: brandCode,
+      brandName: detailsData.brand,
+      modelCode: fipeCode, // Usar o código FIPE como modelo code (será usado para buscar detalhes)
+      modelName: detailsData.model,
+      yearCode: yearCodeToUse,
+      yearName: selectedYear.name || selectedYear.nome
+    };
+  } catch (error) {
+    console.error('❌ Erro ao buscar marca, modelo e ano por código FIPE:', error);
+    throw new Error('Falha ao buscar informações do veículo. Verifique o código FIPE.');
   }
 };

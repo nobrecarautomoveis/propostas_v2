@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2 } from 'lucide-react';
 import { useEffect } from 'react';
-import { Doc } from '../../../convex/_generated/dataModel';
+import type { User } from '@/lib/supabase';
 
 // Zod schema for form validation
 const formSchema = z.object({
@@ -25,7 +25,7 @@ export type UserFormData = z.infer<typeof formSchema>;
 // Component props
 type UserFormProps = {
   onSubmit: (data: UserFormData) => void;
-  initialData?: Doc<"users">;
+  initialData?: User;
   isSubmitting: boolean;
 };
 
